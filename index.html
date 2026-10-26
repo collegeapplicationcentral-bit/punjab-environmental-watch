@@ -20,6 +20,19 @@
   <main>
     <div class="controls">
       <label>
+  Show last
+  <select id="days-select">
+    <option value="1">1 day</option>
+    <option value="2">2 days</option>
+    <option value="3">3 days</option>
+    <option value="5" selected>5 days</option>
+  </select>
+</label>
+<label>
+  <input id="conf-toggle" type="checkbox">
+  Hide low confidence
+</label>
+      <label>
         <input id="fires-toggle" type="checkbox" checked>
         NASA FIRMS detections
       </label>
@@ -31,6 +44,10 @@
         <input id="aqi-toggle" type="checkbox">
         Air quality (modelled)
       </label>
+      <label>
+  <input id="shade-toggle" type="checkbox">
+  Shade districts by fires
+</label>
       <button id="refresh-button">Refresh detections</button>
       <strong id="count">Detections: —</strong>
     </div>

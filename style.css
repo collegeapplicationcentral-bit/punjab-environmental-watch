@@ -93,3 +93,31 @@ button:disabled {
   font-weight: 700;
   text-align: center;
 }
+.reset-btn {
+  display: block;
+  width: 30px;
+  height: 30px;
+  line-height: 30px;
+  background: #fff;
+  color: #222;
+  font-size: 18px;
+  text-align: center;
+  text-decoration: none;
+}
+.reset-btn:hover { background: #f4f4f4; }
+
+.legend {
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border-radius: 50%;
+}
