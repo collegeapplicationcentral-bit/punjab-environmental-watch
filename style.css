@@ -11,7 +11,7 @@ body {
 }
 
 header {
-  padding: 24px;
+  padding: 14px 24px;
   background: #12352f;
   color: white;
 }
@@ -61,7 +61,7 @@ button:disabled {
 }
 
 #map {
-  height: 70vh;
+  height: calc(100vh - 200px);
   min-height: 420px;
   border: 1px solid #d9e2e3;
   border-radius: 10px;
@@ -82,4 +82,14 @@ button:disabled {
   #map {
     height: 65vh;
   }
+}
+.aqi-badge span {
+  display: block;
+  padding: 2px 6px;
+  border: 1px solid #fff;
+  border-radius: 11px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
 }
