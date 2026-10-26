@@ -10,155 +10,139 @@ from pathlib import Path
 
 import requests
 
-# Punjab bounding box: west, south, east, north
 BBOX = (73.8, 29.5, 76.9, 32.5)
 DAYS = 5
-
 FEEDS = [
     "VIIRS_SNPP_NRT",
     "VIIRS_NOAA20_NRT",
     "VIIRS_NOAA21_NRT",
 ]
-
 OUTPUT = Path("data/fires.geojson")
-TIMEOUT = 40
 
-def fetch_feed(session, key, feed):
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "PunjabEnvironmentalWatch/1.0"
+})
+
+
+def fetch_feed(key, feed):
     west, south, east, north = BBOX
     url = (
         "https://firms.modaps.eosdis.nasa.gov/api/area/csv/"
-        f"{key}/{feed}/{west},{south},{east},{north}/{DAYS}"
+        f"{key}/{feed}/"
+        f"{west},{south},{east},{north}/{DAYS}"
     )
+
+    last_error = None
 
     for attempt in range(3):
         try:
-            response = session.get(url, timeout=TIMEOUT)
-
-            if response.status_code in (429, 502, 503, 504):
-                if attempt < 2:
-                    time.sleep(2 ** (attempt + 1))
-                    continue
-
+            response = session.get(url, timeout=40)
             response.raise_for_status()
-            text = response.text.strip()
 
-            if not text or "<html" in text[:500].lower():
-                raise ValueError("FIRMS did not return CSV data")
+            body = response.text.strip()
 
-            reader = csv.DictReader(io.StringIO(text))
-            if not reader.fieldnames:
-                raise ValueError("FIRMS CSV has no header")
+            if (
+                not body
+                or "latitude" not in body.splitlines()[0].lower()
+                or "<html" in body[:500].lower()
+            ):
+                raise ValueError("Response was not valid FIRMS CSV")
 
-            # Accept only a recognizable CSV containing coordinates.
-            columns = {
-                name.strip().lower()
-                for name in reader.fieldnames
-                if name
-            }
-            if not {"latitude", "longitude"}.issubset(columns):
-                raise ValueError("FIRMS CSV lacks latitude/longitude")
+            return list(csv.DictReader(io.StringIO(body)))
 
-            rows = []
-            for raw in reader:
-                row = {
-                    (k.strip().lower() if k else ""): v
-                    for k, v in raw.items()
-                }
-
-                try:
-                    lat = float(row["latitude"])
-                    lon = float(row["longitude"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-
-                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-                    continue
-
-                # Keep only detections inside our Punjab search area.
-                if not (west <= lon <= east and south <= lat <= north):
-                    continue
-
-                rows.append({
-                    "type": "Feature",
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [lon, lat],
-                    },
-                    "properties": {
-                        "acq_date": row.get("acq_date"),
-                        "acq_time": row.get("acq_time"),
-                        "confidence": row.get("confidence"),
-                        "frp": row.get("frp"),
-                        "satellite": row.get("satellite"),
-                        "instrument": row.get("instrument"),
-                        "source": feed,
-                    },
-                })
-
-            return rows
-
-        except (requests.RequestException, ValueError, csv.Error) as exc:
-            if attempt == 2:
-                print(f"{feed} failed: {type(exc).__name__}")
-            else:
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            if attempt < 2:
                 time.sleep(2 ** (attempt + 1))
 
-    return None
+    raise RuntimeError(f"{feed} failed: {last_error}")
 
 
 def main():
     key = os.environ.get("FIRMS_MAP_KEY", "").strip()
+
     if not key:
-        sys.exit("Missing FIRMS_MAP_KEY secret.")
+        sys.exit("FIRMS_MAP_KEY is missing.")
 
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "PunjabEnvironmentalWatch/1.0"
-    })
-
-    features = None
+    rows = None
+    chosen_feed = None
 
     for feed in FEEDS:
-        print(f"Trying FIRMS feed: {feed}")
-        result = fetch_feed(session, key, feed)
+        try:
+            candidate_rows = fetch_feed(key, feed)
+            valid_rows = []
 
-        # None means the request failed; [] means a valid empty result.
-        if result is not None:
-            features = result
-            print(f"Feed succeeded: {feed}; detections: {len(result)}")
+            for row in candidate_rows:
+                try:
+                    lat = float(row["latitude"])
+                    lon = float(row["longitude"])
+                except (ValueError, TypeError, KeyError):
+                    continue
+
+                west, south, east, north = BBOX
+
+                if west <= lon <= east and south <= lat <= north:
+                    valid_rows.append((row, lat, lon))
+
+            rows = valid_rows
+            chosen_feed = feed
             break
 
-    if features is None:
-        # Do not overwrite the last known data if all feeds fail.
-        sys.exit("All FIRMS feeds failed. Existing data was preserved.")
+        except Exception as exc:
+            print(f"{feed} failed: {exc}")
 
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    if rows is None:
+        # Preserve the last good file if every NASA feed fails.
+        sys.exit("All FIRMS feeds failed; existing data was preserved.")
 
-    document = {
+    features = []
+
+    for row, lat, lon in rows:
+        properties = {
+            "acq_date": row.get("acq_date"),
+            "acq_time": row.get("acq_time"),
+            "confidence": row.get("confidence"),
+            "frp": row.get("frp"),
+            "satellite": row.get("satellite"),
+            "source": chosen_feed,
+        }
+
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [lon, lat],
+            },
+            "properties": {
+                k: v for k, v in properties.items()
+                if v not in (None, "")
+            },
+        })
+
+    result = {
         "type": "FeatureCollection",
         "metadata": {
-            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "source": "NASA FIRMS",
-            "feed": features[0]["properties"]["source"] if features else None,
+            "feed": chosen_feed,
             "days_requested": DAYS,
-            "bbox": list(BBOX),
-            "note": (
-                "Satellite thermal anomaly detections; "
-                "not confirmation of unique fires or air quality."
-            ),
+            "generated_at_utc": datetime.now(
+                timezone.utc
+            ).isoformat(timespec="seconds"),
+            "detection_count": len(features),
         },
         "features": features,
     }
 
-    # Write atomically so a partial file is never published.
-    temporary = OUTPUT.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(document, separators=(",", ":"), allow_nan=False),
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = OUTPUT.with_suffix(".geojson.tmp")
+    temp_file.write_text(
+        json.dumps(result, separators=(",", ":")),
         encoding="utf-8",
     )
-    temporary.replace(OUTPUT)
+    temp_file.replace(OUTPUT)
 
-    print(f"Updated {OUTPUT} with {len(features)} detections.")
+    print(f"Saved {len(features)} detections from {chosen_feed}.")
 
 
 if __name__ == "__main__":
